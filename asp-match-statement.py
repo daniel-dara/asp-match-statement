@@ -1,5 +1,4 @@
 # TODO:
-# Add logic for comments
 # Add logic for cases like this:
 #   If condition = "If Then" Then
 #   End If
@@ -14,7 +13,7 @@ class MatchStatementCommand(sublime_plugin.TextCommand):
 
         # Get environment variables.
         view = self.view # sublime.View
-        sel = view.sel() # sublime.Selection
+        sel  = view.sel() # sublime.Selection
 
         # Get the first region of the selection (other selected regions are ignored).
         region = view.sel()[0] # sublime.Region
@@ -30,13 +29,15 @@ class MatchStatementCommand(sublime_plugin.TextCommand):
         selectedText = view.substr(region)
         
         # Turn off case sensitivity and detect keywords split across multiple lines (such as If... Then)
-        regexFlags   = re.I | re.S
+        regexFlags   = re.I | re.S | re.M
 
         # Initialize regular expression patterns
         regexNonAsp     = r"%>((?!<%).)*<%"
         regexString     = r"\"[^\"]*\""
+        regexComment    = r"^[\t ]*'[^\n]*$"
         
         regexNonAspRev  = r"%<((?!>%).)*>%"
+        regexCommentRev = r"^[^\n]*'[\t ]*$"
         
         regexIfThen     = r"\bIf((?!\bThen\b).)*Then\b"
         regexEndIf      = r"\bEnd\s*If\b"
@@ -76,11 +77,11 @@ class MatchStatementCommand(sublime_plugin.TextCommand):
         # Detect what type of statement was selected and what will be searched for
         for config in statementConfigurations:
             if re.search(config[1], selectedText, regexFlags):
-                statementType = config[0]
-                print("Found statement of type: " + statementType)
+                statementType  = config[0]
                 statementStart = config[2]
-                statementEnd = config[3]
-                isReverse = config[4]
+                statementEnd   = config[3]
+                isReverse      = config[4]
+                print("Found statement of type: " + statementType)
                 break
 
         if statementType is None:
@@ -88,21 +89,29 @@ class MatchStatementCommand(sublime_plugin.TextCommand):
             return
 
         if isReverse:
-            regexNonAsp = regexNonAspRev
-            cursorIndex = view.size() - min(region.a, region.b) # reverse the cursor index
-            document = document[::-1] # reverse the document
+            regexNonAsp  = regexNonAspRev
+            regexComment = regexCommentRev
+            cursorIndex  = view.size() - min(region.a, region.b) # reverse the cursor index
+            document     = document[::-1] # reverse the document
         else:
-            cursorIndex = max(region.a, region.b)
+            cursorIndex  = max(region.a, region.b)
 
         # Initialize other local variables
         matchStatementEnd = 0 # kick start the loop
         nestingLevel      = 0
 
+        compiledStatementEnd   = re.compile(statementEnd, regexFlags)
+        compiledStatementStart = re.compile(statementStart, regexFlags)
+        compiledString         = re.compile(regexString, regexFlags)
+        compiledNonAsp         = re.compile(regexNonAsp, regexFlags)
+        compiledComment        = re.compile(regexComment, regexFlags)
+
         while True:
-            matchStatementEnd   = re.compile(statementEnd, regexFlags).search(document, cursorIndex)
-            matchStatementStart = re.compile(statementStart, regexFlags).search(document, cursorIndex)
-            matchString         = re.compile(regexString, regexFlags).search(document, cursorIndex)
-            matchNonAsp         = re.compile(regexNonAsp, regexFlags).search(document, cursorIndex)
+            matchStatementEnd   = compiledStatementEnd.search(document, cursorIndex)
+            matchStatementStart = compiledStatementStart.search(document, cursorIndex)
+            matchString         = compiledString.search(document, cursorIndex)
+            matchNonAsp         = compiledNonAsp.search(document, cursorIndex)
+            matchComment        = compiledComment.search(document, cursorIndex)
 
             #print("matchStatementEnd: " + str(matchStatementEnd.start()))
             #print("matchString: " + str(matchString.start()))
@@ -114,19 +123,23 @@ class MatchStatementCommand(sublime_plugin.TextCommand):
                 print("No ending statement found.")
                 return
 
-            matches = [(matchStatementEnd.start(), matchStatementEnd)]
+            matches = [
+                matchStatementEnd,
+                matchString,
+                matchNonAsp,
+                matchStatementStart,
+                matchComment,
+                ]
 
-            if matchString is not None:
-                matches.append((matchString.start(), matchString))
+            # Filter out "None" values so the custom rank function for sorting doesn't break when it calls
+            # the .start() method.
+            matches = filter(None, matches)
 
-            if matchNonAsp is not None:
-                matches.append((matchNonAsp.start(), matchNonAsp))
-
-            if matchStatementStart is not None:
-                matches.append((matchStatementStart.start(), matchStatementStart))
-
-            closest = min(matches, key=lambda x: x[0])[1]
-            # closest = min(matches, key=lambda x: x.start())
+            # Find the matched pattern with the closest starting point.
+            # Note that reverse searching could mistakenly match a commented if-statement since
+            # matchStatementEnd and matchComment will have the same .start() value.
+            # The winner of such a tie should be matchComment since the line is actually commented.
+            closest = min(matches, key=lambda x:(x.start(), x == matchStatementEnd))
 
             if closest == matchStatementEnd:
                 if nestingLevel == 0:
@@ -135,11 +148,11 @@ class MatchStatementCommand(sublime_plugin.TextCommand):
                     sel.clear()
 
                     start = closest.start()
-                    end = closest.end()
+                    end   = closest.end()
 
                     if isReverse:
                         start = view.size() - start
-                        end = view.size() - end
+                        end   = view.size() - end
 
                     # select the entire statement
                     sel.add(sublime.Region(start, end))
@@ -150,7 +163,6 @@ class MatchStatementCommand(sublime_plugin.TextCommand):
                 else:
                     nestingLevel -= 1
             elif closest == matchStatementStart:
-                print("nesting plus one")
                 nestingLevel += 1
 
             cursorIndex = closest.end()
