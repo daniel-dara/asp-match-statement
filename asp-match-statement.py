@@ -1,3 +1,9 @@
+# TODO:
+# Add logic for comments
+# Add logic for cases like this:
+#   If condition = "If Then" Then
+#   End If
+
 import sublime
 import sublime_plugin
 import re
@@ -24,7 +30,7 @@ class MatchStatementCommand(sublime_plugin.TextCommand):
         selectedText = view.substr(region)
         
         # Turn off case sensitivity and detect keywords split across multiple lines (such as If... Then)
-        regexFlags   = re.I or re.S
+        regexFlags   = re.I | re.S
 
         # Initialize regular expression patterns
         regexNonAsp     = r"%>((?!<%).)*<%"
@@ -90,7 +96,7 @@ class MatchStatementCommand(sublime_plugin.TextCommand):
 
         # Initialize other local variables
         matchStatementEnd = 0 # kick start the loop
-        nestingLevel = 0
+        nestingLevel      = 0
 
         while True:
             matchStatementEnd   = re.compile(statementEnd, regexFlags).search(document, cursorIndex)
@@ -120,6 +126,7 @@ class MatchStatementCommand(sublime_plugin.TextCommand):
                 matches.append((matchStatementStart.start(), matchStatementStart))
 
             closest = min(matches, key=lambda x: x[0])[1]
+            # closest = min(matches, key=lambda x: x.start())
 
             if closest == matchStatementEnd:
                 if nestingLevel == 0:
